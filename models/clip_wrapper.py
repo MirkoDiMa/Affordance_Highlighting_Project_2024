@@ -1,0 +1,38 @@
+# src/models/clip_wrapper.py
+
+import clip
+import torch
+from utils import device
+
+def get_clip_model(model_name: str):
+    """
+    Load CLIP model + preprocess from open-clip.
+    """
+    model, preprocess = clip.load(model_name, device=device)
+    model.eval()
+    return model, preprocess
+
+def encode_text(model, text: str) -> torch.Tensor:
+    """
+    Encode a single prompt into a normalized CLIP text embedding: [1, D].
+    """
+    tokens = clip.tokenize([text]).to(device)
+    with torch.no_grad():
+        t_emb = model.encode_text(tokens)
+        t_emb = t_emb / t_emb.norm(dim=-1, keepdim=True)
+    return t_emb
+
+def encode_image(model, preprocess, images: torch.Tensor) -> torch.Tensor:
+    """
+    Encode a batch of images into CLIP embeddings.
+    images: [B,3,H,W] in [0,1]. We normalize using CLIP's stats.
+    Returns: [B, D] normalized embeddings.
+    """
+    # CLIP’s recommended normalization
+    import torchvision.transforms as T
+    normalize = T.Normalize(mean=preprocess.mean, std=preprocess.std)  # uses preprocess’s stats
+    imgs = normalize(images)
+    with torch.no_grad():
+        i_emb = model.encode_image(imgs)
+        i_emb = i_emb / i_emb.norm(dim=-1, keepdim=True)
+    return i_emb
