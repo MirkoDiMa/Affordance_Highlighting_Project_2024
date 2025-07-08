@@ -28,10 +28,17 @@ def encode_image(model, preprocess, images: torch.Tensor) -> torch.Tensor:
     images: [B,3,H,W] in [0,1]. We normalize using CLIP's stats.
     Returns: [B, D] normalized embeddings.
     """
-    # CLIP’s recommended normalization
-    import torchvision.transforms as T
-    normalize = T.Normalize(mean=preprocess.mean, std=preprocess.std)  # uses preprocess’s stats
+    # CLIP’s recommended normalization: estrai il Normalize dal preprocess
+    # preprocess è un Compose; l'ultimo elemento è Normalize(mean, std)
+    normalize = None
+    for t in preprocess.transforms:
+        if isinstance(t, torch.nn.modules.normalization.Normalize):
+            normalize = t
+            break
+    if normalize is None:
+        raise RuntimeError("Cannot find Normalize transform in CLIP preprocess pipeline")
     imgs = normalize(images)
+    
     with torch.no_grad():
         i_emb = model.encode_image(imgs)
         i_emb = i_emb / i_emb.norm(dim=-1, keepdim=True)
