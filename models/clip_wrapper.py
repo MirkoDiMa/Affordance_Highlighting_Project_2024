@@ -30,9 +30,11 @@ def encode_image(model, preprocess, images: torch.Tensor) -> torch.Tensor:
     """
     # CLIP’s recommended normalization: estrai il Normalize dal preprocess
     # preprocess è un Compose; l'ultimo elemento è Normalize(mean, std)
-    normalize = None
+    # Cerchiamo torchvision.transforms.Normalize nella pipeline
+    from torchvision.transforms import Normalize
+    normalize: Normalize = None
     for t in preprocess.transforms:
-        if isinstance(t, torch.nn.modules.normalization.Normalize):
+        if isinstance(t, Normalize):
             normalize = t
             break
     if normalize is None:
