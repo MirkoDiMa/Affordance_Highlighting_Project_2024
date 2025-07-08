@@ -44,7 +44,7 @@ def encode_image(model, preprocess, images: torch.Tensor) -> torch.Tensor:
         images = images[:, :len(normalize.mean), :, :]
     imgs = normalize(images)
     
-    with torch.no_grad():
-        i_emb = model.encode_image(imgs)
-        i_emb = i_emb / i_emb.norm(dim=-1, keepdim=True)
+    # ATTENZIONE: NON wrapping in no_grad, così il grad va indietro nell'MLP
+    i_emb = model.encode_image(imgs)
+    i_emb = i_emb / i_emb.norm(dim=-1, keepdim=True)
     return i_emb
