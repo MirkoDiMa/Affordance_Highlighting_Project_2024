@@ -39,6 +39,9 @@ def encode_image(model, preprocess, images: torch.Tensor) -> torch.Tensor:
             break
     if normalize is None:
         raise RuntimeError("Cannot find Normalize transform in CLIP preprocess pipeline")
+    # Se ci sono più di 3 canali (es. RGBA), teniamo solo i primi 3 (RGB)
+    if images.shape[1] != len(normalize.mean):
+        images = images[:, :len(normalize.mean), :, :]
     imgs = normalize(images)
     
     with torch.no_grad():
