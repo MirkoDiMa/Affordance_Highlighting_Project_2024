@@ -37,16 +37,20 @@ def get_face_attributes_from_color(mesh, color):
 
 def color_mesh(pred_class: torch.Tensor, sampled_mesh, colors: torch.Tensor):
     """
-    Funzione legacy: aggiorna sampled_mesh.face_attributes in stile Kaolin.
-    Non utilizzata dal renderer PyTorch3D, ma lasciata per compatibilità.
+    Aggiorna sampled_mesh.face_attributes per PyTorch3D, 
+    prendendo il colore di ogni vertice e mappandolo sulle facce.
+    
+    pred_class: [V, C] probabilità per vertice
+    sampled_mesh.faces: [F, 3] indici dei vertici per faccia
+    colors: [C, 3] palette RGB
     """
-    # pred_class: [N, C], colors: [C,3]
-    pred_rgb = segment2rgb(pred_class, colors)  # [N,3]
-    # ricrea face_attributes (ogni faccia ha 3 vertici stessi colori)
-    F = sampled_mesh.faces.shape[0]
-    fa = pred_rgb.view(1, F, 3).unsqueeze(-1).expand(1, F, 3, 3)
-    sampled_mesh.face_attributes = fa.to(device)
-    # normalizza la mesh se serve (legacy)
+    # 1) calcola colore continuo per vertice: [V,3]
+    pred_rgb = segment2rgb(pred_class, colors)  # [V,3]
+    # 2) per ciascuna faccia, raccogli i 3 colori dei suoi vertici:
+    #    faces: [F,3], quindi pred_rgb[faces] ha shape [F,3,3]
+    face_attrs = pred_rgb[sampled_mesh.faces].unsqueeze(0)  # [1, F, 3, 3]
+    sampled_mesh.face_attributes = face_attrs.to(device)
+    # 3) (legacy) normalizza la mesh, se serve
     MeshNormalizer(sampled_mesh)()
 
 
