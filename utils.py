@@ -51,7 +51,7 @@ def color_mesh(pred_class: torch.Tensor, sampled_mesh, colors: torch.Tensor):
     face_attrs = pred_rgb[sampled_mesh.faces].unsqueeze(0)  # [1, F, 3, 3]
     sampled_mesh.face_attributes = face_attrs.to(device)
     # 3) (legacy) normalizza la mesh, se serve
-    MeshNormalizer(sampled_mesh)()
+    #MeshNormalizer(sampled_mesh)()
 
 
 def segment2rgb(pred_class: torch.Tensor, colors: torch.Tensor) -> torch.Tensor:
@@ -64,6 +64,3 @@ def segment2rgb(pred_class: torch.Tensor, colors: torch.Tensor) -> torch.Tensor:
     return (pred_class @ colors.to(device))
 
 
-# Se avevi in utils funzioni come standardize_mesh, normalize_mesh, add_vertices, add_vertices_with_labels,
-# esse rimangono al loro posto e possono essere importate da qui se vuoi:
-# from .some_module import standardize_mesh, normalize_mesh, add_vertices, add_vertices_with_labels
