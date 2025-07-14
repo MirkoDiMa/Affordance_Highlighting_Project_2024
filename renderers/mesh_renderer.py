@@ -16,10 +16,10 @@ class MeshRendererP3D:
     def __init__(
         self,
         image_size: int = 224,
-        blur_radius: float = 1e-4,
-        faces_per_pixel: int = 50,
-        blend_sigma: float = 1e-4,
-        blend_gamma: float = 1e-4
+        blur_radius: float = 1e-2,
+        faces_per_pixel: int = 100,
+        blend_sigma: float = 1e-2,
+        blend_gamma: float = 1e-2
     ):
         # camere ortografiche
         self.cameras = FoVOrthographicCameras(device=device)
