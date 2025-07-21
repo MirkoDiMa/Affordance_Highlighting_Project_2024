@@ -10,4 +10,3 @@ class MeshNormalizer:
     def __call__(self):
         self._mesh.vertices = self.normalizer(self._mesh.vertices)
         return self._mesh
-

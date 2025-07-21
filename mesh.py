@@ -1,75 +1,113 @@
-# mesh.py
-
+import kaolin as kal
 import torch
-import numpy as np
-from pytorch3d.io import load_obj
+import utils
 from utils import device
+import copy
+import numpy as np
 import PIL
 
-class Mesh:
-    """
-    Mesh object leggero, carica .obj con PyTorch3D e mantiene:
-      - vertices:         torch.Tensor [V,3]
-      - faces:            torch.LongTensor [F,3]
-      - face_attributes:  torch.Tensor [1,F,3,3] per il renderer
-    Supporta set_mesh_color e export OBJ/PLY.
-    """
+class Mesh():
+    def __init__(self,obj_path,color=torch.tensor([0.0,0.0,1.0])):
+        if ".obj" in obj_path:
+            mesh = kal.io.obj.import_mesh(obj_path, with_normals=True)
+        elif ".off" in obj_path:
+            mesh = kal.io.off.import_mesh(obj_path)
+        else:
+            raise ValueError(f"{obj_path} extension not implemented in mesh reader.")
+        self.vertices = mesh.vertices.to(device)
+        self.faces = mesh.faces.to(device)
+        self.vertex_normals = None
+        self.face_normals = None
+        self.texture_map = None
+        self.face_uvs = None
+        if ".obj" in obj_path:
+            if mesh.vertex_normals is not None:
+                self.vertex_normals = mesh.vertex_normals.to(device).float()
 
-    def __init__(self, obj_path: str, color: torch.Tensor = torch.tensor([0.0, 0.0, 1.0])):
-        # 1) Carica con PyTorch3D
-        verts, faces, aux = load_obj(obj_path)
-        self.vertices = verts.to(device)                      # [V,3]
-        self.faces    = faces.verts_idx.to(device)            # [F,3]
+                # Normalize
+                self.vertex_normals = torch.nn.functional.normalize(self.vertex_normals)
 
-        # 2) Ignoro normals/uvs per semplicità
+            if mesh.face_normals is not None:
+                self.face_normals = mesh.face_normals.to(device).float()
 
-        # 3) Imposta colore uniforme
+                # Normalize
+                self.face_normals = torch.nn.functional.normalize(self.face_normals)
+
         self.set_mesh_color(color)
 
-    def set_mesh_color(self, color: torch.Tensor):
-        """
-        Crea face_attributes uniformi: shape [1, F, 3, 3].
-        color: [3] in [0,1]
-        """
-        F = self.faces.shape[0]
-        # crea tensor [1,F,3,3] tutto a color
-        attrs = color.view(1,1,3).expand(1, F, 3)        # [1,F,3]
-        self.face_attributes = attrs.unsqueeze(-1).expand(1, F, 3, 3).to(device)
+    def standardize_mesh(self,inplace=False):
+        mesh = self if inplace else copy.deepcopy(self)
+        return utils.standardize_mesh(mesh)
 
-    def export(self, file: str, extension: str = "ply", color: torch.Tensor = None):
-        """
-        Esporta in PLY ASCII con colore per vertice se fornito,
-        altrimenti in OBJ senza colori aggiuntivi.
-        color: [V,3] in [0,255] interi, se extension=="ply".
-        """
-        verts = self.vertices.cpu().numpy()
-        faces = self.faces.cpu().numpy()
+    def normalize_mesh(self,inplace=False):
 
-        if extension == "obj":
-            with open(file, "w") as f:
-                for v in verts:
-                    f.write(f"v {v[0]} {v[1]} {v[2]}\n")
-                for face in faces:
-                    f.write(f"f {face[0]+1} {face[1]+1} {face[2]+1}\n")
+        mesh = self if inplace else copy.deepcopy(self)
+        return utils.normalize_mesh(mesh)
 
-        elif extension == "ply":
-            # default bianco se non passo color
-            if color is None:
-                color_arr = np.ones_like(verts, dtype=np.uint8) * 255
-            else:
-                color_arr = np.clip(color.cpu().numpy(), 0, 255).astype(np.uint8)
+    def update_vertex(self,verts,inplace=False):
 
-            with open(file, "w") as f:
+        mesh = self if inplace else copy.deepcopy(self)
+        mesh.vertices = verts
+        return mesh
+
+    def set_mesh_color(self,color):
+        self.texture_map = utils.get_texture_map_from_color(self,color)
+        self.face_attributes = utils.get_face_attributes_from_color(self,color)
+
+    def set_image_texture(self,texture_map,inplace=True):
+
+        mesh = self if inplace else copy.deepcopy(self)
+
+        if isinstance(texture_map,str):
+            texture_map = PIL.Image.open(texture_map)
+            texture_map = np.array(texture_map,dtype=np.float) / 255.0
+            texture_map = torch.tensor(texture_map,dtype=torch.float).to(device).permute(2,0,1).unsqueeze(0)
+
+
+        mesh.texture_map = texture_map
+        return mesh
+
+    def divide(self,inplace=True):
+        mesh = self if inplace else copy.deepcopy(self)
+        new_vertices, new_faces, new_vertex_normals, new_face_uvs, new_face_normals = utils.add_vertices(mesh)
+        mesh.vertices = new_vertices
+        mesh.faces = new_faces
+        mesh.vertex_normals = new_vertex_normals
+        mesh.face_uvs = new_face_uvs
+        mesh.face_normals = new_face_normals
+        return mesh
+
+    def divide_with_labels(self, face_label_map, inplace=True):
+        mesh = self if inplace else copy.deepcopy(self)
+        new_vertices, new_faces, new_vertex_normals, new_face_label_map = utils.add_vertices_with_labels(mesh, face_label_map)
+        mesh.vertices = new_vertices
+        mesh.faces = new_faces
+        mesh.vertex_normals = new_vertex_normals
+        return mesh, new_face_label_map
+
+    def export(self, file, extension="obj", color=None):
+        with open(file, "w+") as f:
+            if extension == "obj":
+                for vi, v in enumerate(self.vertices):
+                    if color is None:
+                        f.write("v %f %f %f\n" % (v[0], v[1], v[2]))
+                    else:
+                        f.write("v %f %f %f %f %f %f\n" % (v[0], v[1], v[2], color[vi][0], color[vi][1], color[vi][2]))
+                    if self.vertex_normals is not None:
+                        f.write("vn %f %f %f\n" % (self.vertex_normals[vi, 0], self.vertex_normals[vi, 1], self.vertex_normals[vi, 2]))
+                for face in self.faces:
+                    f.write("f %d %d %d\n" % (face[0] + 1, face[1] + 1, face[2] + 1))
+            elif extension == "ply":
                 f.write("ply\nformat ascii 1.0\n")
-                f.write(f"element vertex {len(verts)}\n")
-                f.write("property float x\nproperty float y\nproperty float z\n")
+                f.write("element vertex {}\n".format(self.vertices.shape[0]))
+                f.write("property float32 x\nproperty float32 y\nproperty float32 z\n")
                 f.write("property uchar red\nproperty uchar green\nproperty uchar blue\n")
-                f.write(f"element face {len(faces)}\n")
-                f.write("property list uchar int vertex_indices\n")
+                f.write("element face {}\n".format(self.faces.shape[0]))
+                f.write("property list uint8 int32 vertex_index\n")
                 f.write("end_header\n")
-                for (x,y,z), (r,g,b) in zip(verts, color_arr):
-                    f.write(f"{x:.6f} {y:.6f} {z:.6f} {r} {g} {b}\n")
-                for face in faces:
-                    f.write(f"3 {face[0]} {face[1]} {face[2]}\n")
-        else:
-            raise ValueError(f"Unknown extension '{extension}'")
+                for vi, v in enumerate(self.vertices):
+                    f.write("%f %f %f %d %d %d\n" % (v[0], v[1], v[2], color[vi][0], color[vi][1], color[vi][2]))
+                for face in self.faces:
+                    f.write("3 %d %d %d\n" % (face[0], face[1], face[2]))
+            else:
+                print("error -- mesh.py: incorrect extension provdied in mesh.export()")
