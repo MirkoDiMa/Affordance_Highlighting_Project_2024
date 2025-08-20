@@ -4,7 +4,7 @@
 import os
 import numpy as np
 import open3d as o3d
-
+import copy
 
 # --------------------------- Point cloud sampling --------------------------- #
 def sample_pointcloud_from_obj(
@@ -190,7 +190,7 @@ def reconstruct_mesh_from_ply(
             )
         raise RuntimeError("Reconstruction produced empty mesh.")
 
-    mesh_before = mesh.clone()
+    mesh_before = copy.deepcopy(mesh)
     mesh = _remove_tiny_triangles(mesh, area_thresh_rel=1e-7)
     mesh.compute_vertex_normals()
 
