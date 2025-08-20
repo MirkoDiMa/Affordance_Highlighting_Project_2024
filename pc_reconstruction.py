@@ -178,14 +178,19 @@ def reconstruct_mesh_from_ply(ply_path: str,
     if V == 0 or F == 0:
         raise RuntimeError("Mesh empty after cleaning; relax thresholds or try BPA.")
 
+    # --- Salvataggio in OBJ (come il compagno) ---
     if out_mesh_path is None:
         base = os.path.splitext(os.path.basename(ply_path))[0]
-        out_mesh_path = f"./data/{base}_reconstructed.off"
+        out_mesh_path = f"./data/{base}_reconstructed.obj"
     else:
         root, _ = os.path.splitext(out_mesh_path)
-        out_mesh_path = root + ".off"  # forza OFF
+        out_mesh_path = root + ".obj"
 
-    os.makedirs(os.path.dirname(out_mesh_path), exist_ok=True)
+    # (facoltativo) rimuovi i colori per restare “pulito”
+    if mesh.has_vertex_colors():
+        mesh.remove_vertex_colors()
+
     o3d.io.write_triangle_mesh(out_mesh_path, mesh)
     print(f"[reconstruct_mesh_from_ply] Saved mesh: {out_mesh_path} | V={V} F={F}")
     return out_mesh_path
+
