@@ -186,10 +186,6 @@ def reconstruct_mesh_from_ply(ply_path: str,
         root, _ = os.path.splitext(out_mesh_path)
         out_mesh_path = root + ".obj"
 
-    # (facoltativo) rimuovi i colori per restare “pulito”
-    if mesh.has_vertex_colors():
-        mesh.remove_vertex_colors()
-
     o3d.io.write_triangle_mesh(out_mesh_path, mesh)
     print(f"[reconstruct_mesh_from_ply] Saved mesh: {out_mesh_path} | V={V} F={F}")
     return out_mesh_path
