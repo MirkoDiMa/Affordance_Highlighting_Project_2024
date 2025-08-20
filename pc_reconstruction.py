@@ -77,30 +77,30 @@ def _taubin_smooth(mesh, iters=15):
 import numpy as np, open3d as o3d, os
 def reconstruct_mesh_from_ply(ply_path: str,
                               recon_method: str = "poisson",
-                              poisson_depth: int = 11,           # +1 dettaglio
+                              poisson_depth: int = 11,
                               alpha: float = 0.03,
                               bpa_ball_radius_rel: float = 0.03,
-                              density_quantile: float = 0.002,   # meno aggressivo (0.2%)
-                              smooth_iters: int = 5,             # smoothing leggero, come il compagno
+                              density_quantile: float = 0.002,
+                              smooth_iters: int = 5,
                               out_mesh_path: str = None) -> str:
+    import numpy as np, open3d as o3d, os, copy
 
     pcd = o3d.io.read_point_cloud(ply_path)
     if len(pcd.points) == 0:
         raise RuntimeError(f"Empty point cloud: {ply_path}")
 
-    # --- Ricostruzione ---
+    # --- Ricostruzione di base ---
     if recon_method == "poisson":
         mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
             pcd, depth=int(poisson_depth), scale=1.03, linear_fit=True
         )
         densities = np.asarray(densities)
-        # Rimuovi SOLO la coda a bassissima densità (conservativo)
         keep = densities > np.quantile(densities, density_quantile)
         mesh = mesh.select_by_index(np.where(keep)[0])
     elif recon_method == "bpa":
         bbox = pcd.get_axis_aligned_bounding_box()
         diag = np.linalg.norm(bbox.get_max_bound() - bbox.get_min_bound())
-        radii = [bpa_ball_radius_rel * diag, 2*bpa_ball_radius_rel * diag]  # due raggi aiutano
+        radii = [bpa_ball_radius_rel * diag, 2*bpa_ball_radius_rel * diag]
         mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
             pcd, o3d.utility.DoubleVector(radii)
         )
@@ -109,41 +109,83 @@ def reconstruct_mesh_from_ply(ply_path: str,
     else:
         raise ValueError("Unknown recon_method.")
 
-    # --- Crop alla bbox della point cloud (evita gusci spuri Poisson) ---
-    aabb = pcd.get_axis_aligned_bounding_box()
-    aabb = aabb.scale(1.02, aabb.get_center())  # un filo più grande
+    # --- Crop alla bbox (leggermente espansa) ---
+    aabb = pcd.get_axis_aligned_bounding_box().scale(1.02, pcd.get_center())
     mesh = mesh.crop(aabb)
 
-    # --- Tieni SOLO il componente connesso più grande ---
+    # --- Largest connected component ---
     labels, counts, _ = mesh.cluster_connected_triangles()
-    labels = np.asarray(labels)
-    counts = np.asarray(counts)
-    largest = counts.argmax()
-    mask = labels != largest
-    mesh.remove_triangles_by_mask(mask)
-    mesh.remove_unreferenced_vertices()
+    labels, counts = np.asarray(labels), np.asarray(counts)
+    if counts.size > 0:
+        largest = counts.argmax()
+        mesh.remove_triangles_by_mask(labels != largest)
+        mesh.remove_unreferenced_vertices()
 
-    # --- Pulizia e smoothing ---
+    # --- Pulizia base ---
     mesh.remove_degenerate_triangles()
     mesh.remove_duplicated_triangles()
     mesh.remove_duplicated_vertices()
     mesh.remove_non_manifold_edges()
     mesh.compute_vertex_normals()
-    
-    # elimina triangoli minuscoli residui
+
+    # --- Sanity prima del filtro "tiny" ---
+    V0 = np.asarray(mesh.vertices).shape[0]
+    F0 = np.asarray(mesh.triangles).shape[0]
+    if V0 == 0 or F0 == 0:
+        # Fallback: prova BPA se Poisson ha collassato, o viceversa
+        if recon_method != "bpa":
+            return reconstruct_mesh_from_ply(ply_path, recon_method="bpa",
+                                             bpa_ball_radius_rel=bpa_ball_radius_rel,
+                                             out_mesh_path=out_mesh_path)
+        else:
+            raise RuntimeError("Reconstruction produced empty mesh.")
+
+    # --- Rimuovi triangoli minuscoli (con guard rail) ---
+    def _remove_tiny_triangles(mesh, area_thresh_rel=5e-6):
+        aabb = mesh.get_axis_aligned_bounding_box()
+        diag = np.linalg.norm(aabb.get_max_bound() - aabb.get_min_bound())
+        tris = np.asarray(mesh.triangles)
+        verts = np.asarray(mesh.vertices)
+        if tris.size == 0 or verts.size == 0:
+            return mesh
+        v0, v1, v2 = verts[tris[:,0]], verts[tris[:,1]], verts[tris[:,2]]
+        areas = 0.5 * np.linalg.norm(np.cross(v1 - v0, v2 - v0), axis=1)
+        keep = areas > (area_thresh_rel * (diag**2))
+        mesh.remove_triangles_by_mask(~keep)
+        mesh.remove_unreferenced_vertices()
+        return mesh
+
+    mesh_before = copy.deepcopy(mesh)
     mesh = _remove_tiny_triangles(mesh, area_thresh_rel=5e-6)
+    mesh.compute_vertex_normals()
 
-    # smoothing Taubin (più efficace del simple smoothing per chiudere micro-fori)
-    mesh = _taubin_smooth(mesh, iters=15)
-
-    if smooth_iters > 0:
-        mesh = mesh.filter_smooth_simple(number_of_iterations=int(smooth_iters))
+    # Se abbiamo “ucciso” quasi tutto, allenta la soglia
+    F1 = np.asarray(mesh.triangles).shape[0]
+    if F1 < max(1000, 0.4 * F0):
+        mesh = _remove_tiny_triangles(mesh_before, area_thresh_rel=1e-6)
         mesh.compute_vertex_normals()
 
-    # --- Salvataggio ---
+    # --- Smoothing (Taubin se presente, altrimenti simple) ---
+    if hasattr(mesh, "filter_smooth_taubin"):
+        mesh = mesh.filter_smooth_taubin(number_of_iterations=int(smooth_iters))
+    else:
+        mesh = mesh.filter_smooth_simple(number_of_iterations=int(smooth_iters))
+    mesh.compute_vertex_normals()
+
+    # --- Ultimo sanity + salvataggio in OFF (più “safe” per Kaolin) ---
+    V = np.asarray(mesh.vertices).shape[0]
+    F = np.asarray(mesh.triangles).shape[0]
+    if V == 0 or F == 0:
+        raise RuntimeError("Mesh empty after cleaning; relax thresholds or try BPA.")
+
     if out_mesh_path is None:
         base = os.path.splitext(os.path.basename(ply_path))[0]
-        out_mesh_path = f"./data/{base}_reconstructed.obj"
+        out_mesh_path = f"./data/{base}_reconstructed.off"
+    else:
+        root, _ = os.path.splitext(out_mesh_path)
+        out_mesh_path = root + ".off"  # forza OFF
+
     os.makedirs(os.path.dirname(out_mesh_path), exist_ok=True)
     o3d.io.write_triangle_mesh(out_mesh_path, mesh)
+    print(f"[reconstruct_mesh_from_ply] Saved mesh: {out_mesh_path} | V={V} F={F}")
     return out_mesh_path
